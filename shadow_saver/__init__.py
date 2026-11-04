@@ -1,0 +1,2 @@
+"""ShadowSaver application."""
+

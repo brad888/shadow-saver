@@ -1,0 +1,6 @@
+*
+!requirements.lock
+!shadow_saver/
+!shadow_saver/**
+**/__pycache__
+**/*.pyc

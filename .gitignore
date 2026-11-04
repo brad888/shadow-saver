@@ -1,0 +1,9 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+*.db
+*.egg-info/
+
+.mobile-data/
+release-records/
