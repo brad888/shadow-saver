@@ -76,3 +76,7 @@ python -m shadow_saver.wxauto_bridge --config C:\private\bridge.json --state C:\
 公众号原入口无需用户修改。HTTP bridge须明确配置私密凭据并从远端main镜像发布后才启用；Windows连接器另行在用户设备运行。公网探针通过只能证明后端可用，不能代替个人微信客户端实测。
 
 参考：[wxauto消息属性](https://docs.wxauto.org/docs/class/Message.html)、[聊天窗口类型](https://docs.wxauto.org/docs/class/Chat.html)、[监听示例](https://docs.wxauto.org/docs/example.html)。
+
+## Mac及Linux云端
+
+Mac原生驱动和共用桌面轮询见 [MAC.md](MAC.md)，当前本机微信4.2辅助功能控件不完整，未完成自动收发实测。Linux云部署与桌面驱动边界见 [CLOUD.md](CLOUD.md)。
