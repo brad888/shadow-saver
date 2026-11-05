@@ -76,7 +76,7 @@ def create_app(settings: Settings | None = None, shopping_entry=None) -> FastAPI
                 content = "识图暂未开放，请发商品链接，或品牌、型号和规格，例如：索尼 WH-1000XM5 深夜蓝。"
             else:
                 entry = shopping_entry(incoming)
-                content = f"点击查询商品优惠：\n{settings.public_base_url}{entry}\n入口15分钟内有效，请勿转发。优惠以平台结算页为准，返利需佣金结算后人工核实。"
+                content = f"点击查询商品优惠：\n{settings.public_base_url}{entry}\n首次打开后请点“打开本次查询”，在收到回复后15分钟内完成登录。同一浏览器登录后可重复打开，请勿转发。优惠以平台结算页为准，返利需佣金结算后人工核实。"
             xml = text_reply(incoming.from_user, incoming.to_user, content)
             if crypto:
                 xml = crypto.encrypt_message(xml, nonce, timestamp)

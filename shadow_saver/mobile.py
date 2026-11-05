@@ -4,9 +4,10 @@ import hmac
 import os
 import secrets
 import time
+from html import escape
 from pathlib import Path
 from fastapi import HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from .app import create_app
 from .config import Settings
 from .pilot import create_pilot_app
@@ -68,12 +69,41 @@ def create_mobile_app(settings=None, config=None, provider=None):
         response.headers['Referrer-Policy']='no-referrer'
         return response
 
+    def entry_page(message, token=None, status=200):
+        form=(f'<form method="post" action="/open/{escape(token,quote=True)}"><button>打开本次查询</button></form>' if token else '')
+        return HTMLResponse(f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1"><title>影省狸 · 查询入口</title>
+        <style>body{{font:17px/1.7 system-ui,sans-serif;color:#17362d;background:#f4f5ef;margin:0;padding:24px}}
+        main{{max-width:520px;margin:12vh auto;background:white;border-radius:20px;padding:28px}}h1{{font-size:25px}}
+        button{{font:inherit;background:#166549;color:white;border:0;border-radius:10px;padding:13px 24px;cursor:pointer}}</style>
+        </head><body><main><h1>影省狸 · 商品查询</h1><p>{escape(message)}</p>{form}
+        <p>请在微信里操作，不要转发查询入口。</p></main></body></html>''',status_code=status)
+
+    def entry_state(token,request):
+        with db() as c:
+            row=c.execute('SELECT owner,used,expires FROM handoffs WHERE token=?',(token,)).fetchone()
+        if row and row['used'] and row['owner']==request.state.owner and session_valid(row['owner']):
+            return row,RedirectResponse('/?entry='+token,status_code=303)
+        if not row or row['expires']<=int(time.time()):
+            return row,entry_page('首次登录需在收到回复后的15分钟内完成。此入口已过期，请回到公众号重新发送商品链接或名称。',status=410)
+        if row['used']:
+            return row,entry_page('这个入口已在其他浏览器使用，当前浏览器尚未登录。请回到公众号重新发送商品链接或名称，再打开新回复。',status=410)
+        return row,None
+
     @app.get('/open/{token}')
+    async def show_entry(token:str,request:Request):
+        row,response=entry_state(token,request)
+        if response is not None: return response
+        return entry_page('点击下方按钮进入商品查询。首次登录请在收到公众号回复后的15分钟内完成。',token)
+
+    @app.post('/open/{token}')
     async def open_entry(token:str,request:Request):
+        row,response=entry_state(token,request)
+        if response is not None: return response
         now=int(time.time())
         with db() as c:
             row=c.execute('UPDATE handoffs SET used=1 WHERE token=? AND used=0 AND expires>? RETURNING owner',(token,now)).fetchone()
-            if not row: raise HTTPException(410,'入口已过期或已使用，请重新向公众号发送商品链接或名称。')
+            if not row: return entry_page('入口状态已变化，请回到公众号重新发送商品链接或名称。',status=410)
             c.execute('INSERT INTO sessions VALUES (?,?) ON CONFLICT(owner) DO UPDATE SET expires=excluded.expires',(row['owner'],now+2592000))
         request.state.owner=row['owner']
         return RedirectResponse('/?entry='+token,status_code=303)
@@ -81,7 +111,7 @@ def create_mobile_app(settings=None, config=None, provider=None):
     @app.get('/api/entry/{token}')
     async def entry_query(token:str,request:Request):
         with db() as c:
-            row=c.execute('SELECT query FROM handoffs WHERE token=? AND owner=? AND used=1 AND expires>?',(token,request.state.owner,int(time.time()))).fetchone()
+            row=c.execute('SELECT query FROM handoffs WHERE token=? AND owner=? AND used=1',(token,request.state.owner)).fetchone()
         if not row: raise HTTPException(404,'查询入口已失效，请重新发送商品信息')
         return {'query':row['query']}
     return app

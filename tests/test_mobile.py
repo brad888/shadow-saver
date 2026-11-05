@@ -25,7 +25,7 @@ def send(client,user='user-one',msgid='1',content='索尼耳机'):
     return ET.fromstring(plain).findtext('Content')
 
 
-def test_wechat_entry_is_single_use_and_orders_stay_private(tmp_path):
+def test_wechat_entry_requires_confirmation_and_orders_stay_private(tmp_path):
     app=create_mobile_app(config(tmp_path),config={'HAODANKU_API_KEY':'test'})
     with TestClient(app,base_url='https://shop.example.com') as c:
         assert c.get('/api/claims').status_code==401
@@ -33,14 +33,14 @@ def test_wechat_entry_is_single_use_and_orders_stay_private(tmp_path):
         assert 'user-one' not in reply
         link=reply.split('https://shop.example.com')[1].splitlines()[0]
         assert send(c)==reply
-        landing=c.get(link,follow_redirects=False)
+        landing=c.post(link,follow_redirects=False)
         assert landing.status_code==303
         assert 'HttpOnly' in landing.headers['set-cookie']
         assert 'Secure' in landing.headers['set-cookie']
         entry=landing.headers['location'].split('entry=')[1]
         assert c.get('/api/entry/'+entry).json()=={'query':'索尼耳机'}
         assert c.get('/api/claims').status_code==200
-        assert c.get(link).status_code==410
+        assert c.get(link,follow_redirects=False).status_code==303
     with TestClient(app,base_url='https://shop.example.com') as other:
         assert other.get('/api/entry/'+entry).status_code==401
 
@@ -57,7 +57,7 @@ def test_public_rate_limit_and_origin_enforcement(tmp_path):
     app=create_mobile_app(config(tmp_path),config={'HAODANKU_API_KEY':'test'})
     with TestClient(app,base_url='https://shop.example.com') as c:
         link=send(c).split('https://shop.example.com')[1].splitlines()[0]
-        c.get(link)
+        c.post(link)
         assert c.post('/api/claims',headers={'Origin':'https://evil.test'},json={}).status_code==403
         assert c.get('/',headers={'Host':'evil.test'}).status_code==400
 
@@ -87,7 +87,7 @@ def test_mobile_search_rate_limit(tmp_path):
     app=create_mobile_app(config(tmp_path),config={'HAODANKU_API_KEY':'test'},provider=Provider())
     with TestClient(app,base_url='https://shop.example.com') as c:
         link=send(c).split('https://shop.example.com')[1].splitlines()[0]
-        c.get(link)
+        c.post(link)
         for _ in range(12): assert c.post('/api/search',json={'query':'耳机'}).status_code==200
         assert c.post('/api/search',json={'query':'耳机'}).status_code==429
 
@@ -97,7 +97,7 @@ def test_two_wechat_users_cannot_read_each_others_entries(tmp_path):
     with TestClient(app,base_url='https://shop.example.com') as a, TestClient(app,base_url='https://shop.example.com') as b:
         linka=send(a,'one','1').split('https://shop.example.com')[1].splitlines()[0]
         linkb=send(b,'two','2').split('https://shop.example.com')[1].splitlines()[0]
-        response=a.get(linka,follow_redirects=False);b.get(linkb)
+        response=a.post(linka,follow_redirects=False);b.post(linkb)
         token=response.headers['location'].split('entry=')[1]
         assert b.get('/api/entry/'+token).status_code==404
         assert a.cookies.get('pilot_visitor')!=b.cookies.get('pilot_visitor')
@@ -107,3 +107,50 @@ def test_public_mobile_requires_encrypted_wechat_callback(tmp_path):
     import pytest
     with pytest.raises(RuntimeError,match='安全模式'):
         create_mobile_app(replace(config(tmp_path),wechat_app_id='',wechat_encoding_aes_key=''),config={})
+
+
+def test_preview_does_not_consume_entry_and_same_browser_can_reopen(tmp_path):
+    app=create_mobile_app(config(tmp_path),config={})
+    with TestClient(app,base_url='https://shop.example.com') as c:
+        link=send(c).split('https://shop.example.com')[1].splitlines()[0]
+        for _ in range(2):
+            page=c.get(link,follow_redirects=False)
+            assert page.status_code==200
+            assert '打开本次查询' in page.text
+        with app.state.db() as db: assert db.execute('SELECT used FROM handoffs').fetchone()[0]==0
+        assert c.get('/api/claims').status_code==401
+        result=c.post(link,follow_redirects=False)
+        assert result.status_code==303
+        assert c.get(link,follow_redirects=False).status_code==303
+    with TestClient(app,base_url='https://shop.example.com') as other:
+        page=other.get(link)
+        assert page.status_code==410
+        assert 'text/html' in page.headers['content-type']
+        assert '重新发送' in page.text
+        assert other.post(link).status_code==410
+
+
+def test_expired_entry_has_readable_page(tmp_path):
+    app=create_mobile_app(config(tmp_path),config={})
+    with TestClient(app,base_url='https://shop.example.com') as c:
+        link=send(c).split('https://shop.example.com')[1].splitlines()[0]
+        with app.state.db() as db: db.execute('UPDATE handoffs SET expires=0')
+        page=c.get(link)
+        assert page.status_code==410
+        assert 'text/html' in page.headers['content-type']
+        assert '15分钟' in page.text
+        assert '{"detail"' not in page.text
+
+
+def test_confirmed_browser_can_reopen_after_entry_deadline_but_not_after_session_expires(tmp_path):
+    app=create_mobile_app(config(tmp_path),config={})
+    with TestClient(app,base_url='https://shop.example.com') as c:
+        link=send(c).split('https://shop.example.com')[1].splitlines()[0]
+        result=c.post(link,follow_redirects=False)
+        token=result.headers['location'].split('entry=')[1]
+        with app.state.db() as db: db.execute('UPDATE handoffs SET expires=0')
+        assert c.get(link,follow_redirects=False).status_code==303
+        assert c.get('/api/entry/'+token).json()=={'query':'索尼耳机'}
+        with app.state.db() as db: db.execute('UPDATE sessions SET expires=0')
+        assert c.get(link).status_code==410
+        assert c.get('/api/entry/'+token).status_code==401
