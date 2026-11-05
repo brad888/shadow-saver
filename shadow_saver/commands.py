@@ -19,13 +19,14 @@ def yuan(cents):
 
 
 class ChatCommands:
-    def __init__(self,ledger,identity_secret,direct_enabled=False):
+    def __init__(self,ledger,identity_secret,direct_enabled=False,owner_resolver=None):
         self.ledger=ledger;self.secret=identity_secret;self.direct_enabled=direct_enabled
+        self.resolve_owner=owner_resolver or (lambda incoming:wechat_owner(self.secret,incoming.from_user))
 
     def handle(self,incoming):
         if incoming.input_type!='text': return None
         content=incoming.input_value.strip()
-        owner=wechat_owner(self.secret,incoming.from_user)
+        owner=self.resolve_owner(incoming)
         if content in {'帮助','菜单','你好'}:
             query=('发商品分享链接：直接查询转链。' if self.direct_enabled else
                    '原始分享链接直接转链暂未开放，正在等待解析接口免费额度。')
