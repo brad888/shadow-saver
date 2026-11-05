@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from .app import create_app
 from .config import Settings
 from .pilot import create_pilot_app
+from .commands import ChatCommands, wechat_owner
 
 
 def create_mobile_app(settings=None, config=None, provider=None):
@@ -35,7 +36,7 @@ def create_mobile_app(settings=None, config=None, provider=None):
     app.state.session_valid=session_valid
 
     def shopping_entry(incoming):
-        owner=hmac.new(settings.wechat_token.encode(),('shopping:'+incoming.from_user).encode(),hashlib.sha256).hexdigest()[:48]
+        owner=wechat_owner(settings.wechat_token,incoming.from_user)
         # WeChat retries a MsgId; return the same entry without repeating provider work.
         token=secrets.token_urlsafe(32)
         message_key=hashlib.sha256((incoming.from_user+':'+incoming.msg_id).encode()).hexdigest()
@@ -52,7 +53,8 @@ def create_mobile_app(settings=None, config=None, provider=None):
     if config.get('DIRECT_LINK_ENABLED')=='1':
         from .direct_reply import DirectReplyService
         direct_reply=DirectReplyService(config,db,settings.wechat_token).reply
-    callback=create_app(settings,shopping_entry=shopping_entry,direct_reply=direct_reply)
+    commands=ChatCommands(app.state.ledger,settings.wechat_token,direct_enabled=bool(direct_reply))
+    callback=create_app(settings,shopping_entry=shopping_entry,direct_reply=direct_reply,command_reply=commands.handle)
     app.router.routes.extend(r for r in callback.router.routes if getattr(r,'path','') in
                             {'/wechat','/api/result/{query_id}','/result/{query_id}'})
 
@@ -118,4 +120,6 @@ def create_mobile_app(settings=None, config=None, provider=None):
             row=c.execute('SELECT query FROM handoffs WHERE token=? AND owner=? AND used=1',(token,request.state.owner)).fetchone()
         if not row: raise HTTPException(404,'查询入口已失效，请重新发送商品信息')
         return {'query':row['query']}
+    from .operations import install_operations
+    install_operations(app,db,config)
     return app

@@ -138,7 +138,9 @@ def create_pilot_app(database_path=None,config=None,provider=None,public_base_ur
         CREATE TABLE IF NOT EXISTS promotions(id TEXT PRIMARY KEY,owner TEXT,platform TEXT,title TEXT,url TEXT,rebate TEXT);
         CREATE TABLE IF NOT EXISTS claims(id TEXT PRIMARY KEY,owner TEXT,promotion_id TEXT,platform TEXT,order_no TEXT,status TEXT,created_at INTEGER,UNIQUE(platform,order_no));''')
     os.chmod(database_path,0o600)
-    app=FastAPI(docs_url=None,redoc_url=None); app.state.db=db
+    from .ledger import Ledger
+    ledger=Ledger(db)
+    app=FastAPI(docs_url=None,redoc_url=None); app.state.db=db; app.state.ledger=ledger
     app.state.require_login=False
     app.state.session_valid=lambda owner: False
     app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver']+([urlparse(public_base_url).hostname] if public_base_url else []))
@@ -212,14 +214,17 @@ def create_pilot_app(database_path=None,config=None,provider=None,public_base_ur
         if not re.fullmatch(r'\d{8,30}',number): raise HTTPException(400,'请输入8～30位数字订单号')
         with db() as c:
             promo=c.execute('SELECT * FROM promotions WHERE id=? AND owner=?',(str(body.get('promotion_id','')),request.state.owner)).fetchone()
-            if not promo: raise HTTPException(404,'请先生成自己的推广链接')
-            cid=secrets.token_hex(16)
-            try: c.execute('INSERT INTO claims VALUES (?,?,?,?,?,?,?)',(cid,request.state.owner,promo['id'],promo['platform'],number,'待人工核账',int(time.time())))
-            except sqlite3.IntegrityError: raise HTTPException(409,'该平台订单已登记，请勿重复提交')
-        return {'id':cid,'status':'待人工核账'}
+        if not promo: raise HTTPException(404,'请先生成自己的推广链接')
+        from .ledger import LedgerError, OrderConflict
+        try:
+            order=ledger.register(request.state.owner,promo['platform'],number,promotion_id=promo['id'],title=promo['title'])
+            if not order.get('created',True): raise HTTPException(409,'该平台订单已登记，请勿重复提交')
+        except OrderConflict: raise HTTPException(409,'该平台订单已登记，请勿重复提交')
+        except LedgerError: raise HTTPException(400,'订单登记失败，请核对格式')
+        return {'id':order['id'],'status':order['status']}
     @app.get('/api/claims')
     async def claims(request:Request):
-        with db() as c:
-            rows=c.execute('SELECT c.id,c.platform,c.order_no,c.status,c.created_at,p.title,p.rebate FROM claims c JOIN promotions p ON p.id=c.promotion_id WHERE c.owner=? ORDER BY c.created_at DESC',(request.state.owner,)).fetchall()
-        return [dict(row) for row in rows]
+        fields={'id','platform','order_no','status','created_at','title','rebate',
+                'actual_commission_cents','rebate_cents','paid_cents','updated_at'}
+        return [{k:v for k,v in row.items() if k in fields} for row in ledger.list_orders(request.state.owner)]
     return app

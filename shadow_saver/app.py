@@ -17,7 +17,7 @@ from .vision import identify_wechat_image
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None, shopping_entry=None, direct_reply=None) -> FastAPI:
+def create_app(settings: Settings | None = None, shopping_entry=None, direct_reply=None, command_reply=None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = QueryStore(settings.database_path)
     app = FastAPI(title="ShadowSaver")
@@ -69,6 +69,13 @@ def create_app(settings: Settings | None = None, shopping_entry=None, direct_rep
             raise HTTPException(400, "Invalid message") from None
         if incoming is None:
             return PlainTextResponse("success")
+        if command_reply:
+            content = command_reply(incoming)
+            if content is not None:
+                xml = text_reply(incoming.from_user, incoming.to_user, content)
+                if crypto:
+                    xml = crypto.encrypt_message(xml, nonce, timestamp)
+                return Response(xml, media_type="text/xml; charset=utf-8")
         if direct_reply and incoming.input_value.strip() not in {
             "红包", "淘宝红包", "领红包", "活动", "淘宝活动",
         }:

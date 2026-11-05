@@ -16,7 +16,7 @@
 
 报价来自联盟商品库，不是实时结算价格。候选商品仍须人工核对规格；不保证同款、全网最低或一定有优惠。未生效/过期优惠禁用；会员优惠标出条件。无法访问的平台显示错误，其余平台结果保留。
 
-预计返利为接口预估佣金的20%，实际返款以可分配且已结算佣金的20%人工核实。当前只登记核账线索，没有订单同步、自动确认归因、自动结算、提现或付款。没有购买商品来验证实际佣金到账。
+预计返利为接口预估佣金的20%，实际返款以可分配且已结算佣金的20%人工核实。已支持人工匹配、实际结算佣金核定、20%返利计算、人工返款凭据和退款处理；没有订单同步、自动确认归因、自动结算、提现或付款。没有购买商品来验证实际佣金到账。
 
 浏览器Cookie识别本机试用者；清除Cookie会失去原记录入口。不要公开部署这个内测服务。公众号回调保持原实现；当前内测页面尚未接入公众号。发布需按全局约束先测试、提交、合入远端main并从干净确切提交构建。
 
@@ -49,3 +49,27 @@
 已准备 `analyze.clipboard` V3适配与安全模式直接文字回复。成功时返回原商品的推广链接和淘宝淘口令，不经过查询页；不回传未经转链的原始链接，不搜索替代商品。重复MsgId复用回复，每用户每分钟最多12次；处理超时约3.2秒则提示重新发送，不依赖未验证的客服主动发送权限。
 
 默认 `DIRECT_LINK_ENABLED=0`。实际免费额度获批、配置 `HAODANKU_V3_APP_ID` 与 `HAODANKU_V3_APP_SECRET`、完成真实原始分享内容联调后，才能启用。普通 `HAODANKU_API_KEY` 不能替代V3凭据。本次只执行HTTP模拟测试，未调用收费解析、未购买额度、未启用线上直接转链。
+
+## 公众号指令与人工核账（2026-11-05）
+
+公众号安全模式接收以下文字指令，不调用收费解析：
+
+- `帮助`：查看用法。
+- `返利规则`：说明券、实际结算佣金20%、退款及人工返款。
+- `登记订单 淘宝 123456789012345678` 或 `登记订单 京东 123456789012`：只登记核账线索，订单号8～30位数字；重复登记不新增。
+- `我的订单`：本人最近5笔订单的脱敏编号、状态与核定金额。与本人网页登录记录共用身份。
+
+登记不证明订单归因，更不代表佣金已结算；人工核账需对应联盟订单、推广记录和结算凭据。后台不对公网开放管理接口。管理员在本机运行以下工具（现有数据库路径必须正确，操作前备份）：
+
+```sh
+.venv/bin/python scripts/manage_orders.py --database .mobile-data/pilot.db --actor 管理员 show 订单登记ID
+.venv/bin/python scripts/manage_orders.py --database .mobile-data/pilot.db --actor 管理员 match 订单登记ID --evidence 联盟订单与推广记录核对凭据
+.venv/bin/python scripts/manage_orders.py --database .mobile-data/pilot.db --actor 管理员 await_settlement 订单登记ID
+.venv/bin/python scripts/manage_orders.py --database .mobile-data/pilot.db --actor 管理员 settle 订单登记ID --commission 13.99 --evidence 实际结算凭据
+.venv/bin/python scripts/manage_orders.py --database .mobile-data/pilot.db --actor 管理员 record_payment 订单登记ID --amount 2.80 --evidence 已完成的人工返款凭据
+.venv/bin/python scripts/manage_orders.py --database .mobile-data/pilot.db --actor 管理员 audit 订单登记ID
+```
+
+`record_payment` 仅记录已经实际完成的人工返款，不转账。无有效佣金不返利；付款金额必须与核定金额一致。退款用 `refund --evidence ...` 登记：返款前取消资格，返款后进入退款待处理；管理员用 `resolve_refund --recovered 金额 --note 处理说明 --evidence 凭据` 记录实际追回及处理结果，不自动扣款。所有状态操作要求管理员身份及凭据并留审计记录。`--help` 查看完整参数。
+
+健康、故障诊断、在线备份和固定域名托管准备见 [运维说明](docs/OPERATIONS.md)。当前仍依赖本机开机联网及现有临时隧道；没有购买或创建云资源。
