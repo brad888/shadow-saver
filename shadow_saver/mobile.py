@@ -48,7 +48,11 @@ def create_mobile_app(settings=None, config=None, provider=None):
         return '/open/'+row['token']
 
     # Reuse the tested WeChat verification, decryption, encrypted replies and old activity routes.
-    callback=create_app(settings,shopping_entry=shopping_entry)
+    direct_reply=None
+    if config.get('DIRECT_LINK_ENABLED')=='1':
+        from .direct_reply import DirectReplyService
+        direct_reply=DirectReplyService(config,db,settings.wechat_token).reply
+    callback=create_app(settings,shopping_entry=shopping_entry,direct_reply=direct_reply)
     app.router.routes.extend(r for r in callback.router.routes if getattr(r,'path','') in
                             {'/wechat','/api/result/{query_id}','/result/{query_id}'})
 
